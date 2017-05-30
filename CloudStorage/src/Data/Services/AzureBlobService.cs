@@ -1,8 +1,10 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using Core.Services;
+using Data.Helpers;
 using Microsoft.Extensions.Configuration;
 using Microsoft.WindowsAzure.Storage;
 using Microsoft.WindowsAzure.Storage.Blob;
@@ -282,6 +284,58 @@ namespace Data.Services
             });
 
             return blob.Uri.AbsoluteUri + sas;
+        }
+
+        /// <summary>
+        /// Get a list of file names that reside in a given virtual folder path
+        /// </summary>
+        /// <param name="containerName">Container name</param>
+        /// <param name="folderPath">Virtual folder path</param>
+        /// <param name="listRecursive">Wether should list blobs in sub-folders or not</param>
+        /// <returns></returns>
+        public async Task<List<string>> GetFileNamesInFolder(string containerName, string folderPath, bool listRecursive = true)
+        {
+            // check parameters
+            if (string.IsNullOrWhiteSpace(containerName)) throw new ArgumentNullException(nameof(containerName));
+            if (string.IsNullOrWhiteSpace(folderPath)) throw new ArgumentNullException(nameof(folderPath));
+
+            List<string> result = null;
+
+            var container = _blobClient.GetContainerReference(containerName);
+            if (!await container.ExistsAsync())
+            {
+                throw new ArgumentException($"Container {container} does not exist");
+            }
+
+            if (folderPath.Equals("/"))
+            {
+                result = (await container
+                    .ListBlobsSegmentedAsync(string.Empty, listRecursive, BlobListingDetails.None, null, null, null, null))
+                    .Results
+                    .Where(_ => _ is CloudBlob) // only blobs, not directories
+                    .Select(_ => (_ as CloudBlob)?.Name)
+                    .ToList();
+            }
+            else
+            {
+                var normalizedPath = BlobHelpers.NormalizeVirtualFolderPath(folderPath);
+                if (!string.IsNullOrWhiteSpace(normalizedPath))
+                {
+                    // get and check container reference
+
+
+                    var folder = container.GetDirectoryReference(folderPath);
+                    result = (await folder
+                        .ListBlobsSegmentedAsync(listRecursive, BlobListingDetails.None, null, null, null, null))
+                        .Results
+                        .Where(_ => _ is CloudBlob) // only blobs, not directories
+                        // remove the current folder path from the blob name (adding 1 extra character length for the trailing '/')
+                        .Select(_ => (_ as CloudBlob)?.Name.Remove(0, normalizedPath.Length + 1))
+                        .ToList();
+                }
+            }
+
+            return result;
         }
     }
 }
